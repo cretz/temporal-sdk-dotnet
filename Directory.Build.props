@@ -1,9 +1,11 @@
 <Project>
   <PropertyGroup>
+    <Authors>Temporal</Authors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>0.1.0-alpha1</Version>
   </PropertyGroup>
 
   <!-- Run Analyzers only on latest .NET version -->

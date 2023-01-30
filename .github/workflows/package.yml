@@ -1,0 +1,85 @@
+name: Build Package
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "releases/*"
+
+jobs:
+  build-rust:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, ubuntu-arm, macos-latest, macos-arm, windows-latest]
+        include:
+          - os: ubuntu-latest
+            in-file: libtemporal_sdk_bridge.so
+            out-prefix: linux-x64
+          - os: ubuntu-arm
+            in-file: libtemporal_sdk_bridge.so
+            out-prefix: linux-arm64
+            runsOn: buildjet-4vcpu-ubuntu-2204-arm
+          - os: macos-latest
+            in-file: libtemporal_sdk_bridge.dylib
+            out-prefix: osx-x64
+          - os: macos-arm
+            in-file: libtemporal_sdk_bridge.dylib
+            out-prefix: osx-arm64
+            alternative-target: aarch64-apple-darwin
+            runsOn: macos-latest
+          - os: windows-latest
+            in-file: temporal_sdk_bridge.dll
+            out-prefix: win-x64
+    runs-on: ${{ matrix.runsOn || matrix.os }}
+    steps:
+      - name: Print build information
+        run: "echo head_ref: ${{ github.head_ref }}, ref: ${{ github.ref }}, os: ${{ matrix.os }}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/Temporalio/Bridge
+
+      - name: Add alternative Rust target
+        if: ${{ matrix.alternative-target }}
+        run: rustup target add ${{ matrix.alternative-target }}
+
+      - name: Install protoc (x64)
+        # Does not work on arm
+        if: ${{ matrix.os != 'ubuntu-arm' }}
+        uses: arduino/setup-protoc@v1
+        with:
+          # TODO(cretz): Upgrade when https://github.com/arduino/setup-protoc/issues/33 fixed
+          version: '3.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protoc (Linux ARM)
+        if: ${{ matrix.os == 'ubuntu-arm' }}
+        run: |
+          sudo apt update -y
+          sudo apt install -y protobuf-compiler
+
+      - name: Build
+        if: ${{ !matrix.alternative-target }}
+        run: cargo build --manifest-path src/Temporalio/Bridge/Cargo.toml --release
+
+      - name: Build alternative target
+        if: ${{ matrix.alternative-target }}
+        run: cargo build --manifest-path src/Temporalio/Bridge/Cargo.toml --release --target ${{ matrix.alternative-target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.out-prefix }}-${{ matrix.in-file }}
+          path: src/Temporalio/Bridge/target/release/${{ matrix.in-file }}
