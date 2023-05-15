@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Temporalio.Runtime;
+using Temporalio.Workflows;
 
 namespace Temporalio.Worker
 {
@@ -11,20 +12,12 @@ namespace Temporalio.Worker
     /// </summary>
     public class WorkflowReplayerOptions : ICloneable
     {
-#pragma warning disable CA2227 // Intentionally allow setting of this collection w/ options pattern
-        /// <summary>
-        /// Gets or sets the workflow types.
-        /// </summary>
-        public IList<Type> Workflows { get; set; } = new List<Type>();
+        private IList<WorkflowDefinition> workflows = new List<WorkflowDefinition>();
 
         /// <summary>
-        /// Gets or sets additional workflow definitions.
+        /// Gets the workflow definitions.
         /// </summary>
-        /// <remarks>
-        /// Unless manual definitions are required, users should use <see cref="Workflows" />.
-        /// </remarks>
-        public IList<Workflows.WorkflowDefinition> AdditionalWorkflowDefinitions { get; set; } = new List<Workflows.WorkflowDefinition>();
-#pragma warning restore CA2227
+        public IList<WorkflowDefinition> Workflows => workflows;
 
         /// <summary>
         /// Gets or sets the namespace. Default is "ReplayNamespace".
@@ -108,14 +101,19 @@ namespace Temporalio.Worker
         /// </remarks>
         internal Func<WorkflowInstanceDetails, IWorkflowInstance>? WorkflowInstanceFactory { get; set; }
 
+        public WorkflowReplayerOptions AddWorkflow<T>() => AddWorkflow(typeof(T));
+
         /// <summary>
         /// Add the given type as a workflow.
         /// </summary>
         /// <param name="type">Type to add.</param>
         /// <returns>This options instance for chaining.</returns>
-        public WorkflowReplayerOptions AddWorkflow(Type type)
+        public WorkflowReplayerOptions AddWorkflow(Type type) =>
+            AddWorkflow(WorkflowDefinition.Create(type));
+
+        public WorkflowReplayerOptions AddWorkflow(WorkflowDefinition definition)
         {
-            Workflows.Add(type);
+            Workflows.Add(definition);
             return this;
         }
 
@@ -127,9 +125,7 @@ namespace Temporalio.Worker
         public virtual object Clone()
         {
             var options = (WorkflowReplayerOptions)MemberwiseClone();
-            options.Workflows = new List<Type>(Workflows);
-            options.AdditionalWorkflowDefinitions =
-                new List<Workflows.WorkflowDefinition>(AdditionalWorkflowDefinitions);
+            options.workflows = new List<WorkflowDefinition>(Workflows);
             return options;
         }
     }
