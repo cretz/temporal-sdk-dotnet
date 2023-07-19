@@ -169,11 +169,6 @@ namespace Temporalio.Worker
         /// <inheritdoc/>
         public override int MaximumConcurrencyLevel => 1;
 
-        /// <summary>
-        /// Gets a value indicating whether this workflow works with tracing events.
-        /// </summary>
-        public bool TracingEventsEnabled { get; private init; }
-
         /// <inheritdoc />
         public CancellationToken CancellationToken => cancellationTokenSource.Token;
 
@@ -239,6 +234,9 @@ namespace Temporalio.Worker
 
         /// <inheritdoc />
         public SearchAttributeCollection TypedSearchAttributes => typedSearchAttributes.Value;
+
+        /// <inheritdoc />
+        public bool TracingEventsEnabled { get; set; }
 
         /// <inheritdoc />
         public DateTime UtcNow { get; private set; }
@@ -307,6 +305,8 @@ namespace Temporalio.Worker
             }
             return patched;
         }
+
+        public void ForceRunOnce() => RunOnce(true);
 
         /// <inheritdoc/>
         public Task<ChildWorkflowHandle<TWorkflow, TResult>> StartChildWorkflowAsync<TWorkflow, TResult>(
@@ -538,6 +538,7 @@ namespace Temporalio.Worker
         /// <inheritdoc/>
         protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued)
         {
+            Console.WriteLine("!!! BB1");
             // No benefit for executing inline, so just append to list if not there
             if (!taskWasPreviouslyQueued)
             {
@@ -549,6 +550,7 @@ namespace Temporalio.Worker
         /// <inheritdoc/>
         protected override void QueueTask(Task task)
         {
+            Console.WriteLine("!!! BB2");
             // Only queue if not already done
             if (!scheduledTaskNodes.ContainsKey(task))
             {
@@ -559,6 +561,7 @@ namespace Temporalio.Worker
         /// <inheritdoc/>
         protected override bool TryDequeue(Task task)
         {
+            Console.WriteLine("!!! BB3");
             // Can't use remove overload that gets value at same time in oldest supported version
             if (scheduledTaskNodes.TryGetValue(task, out var node))
             {

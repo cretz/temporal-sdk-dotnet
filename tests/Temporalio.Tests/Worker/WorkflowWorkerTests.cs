@@ -200,7 +200,7 @@ public class WorkflowWorkerTests : WorkflowEnvironmentTestBase
             {
                 // Bad
                 case Scenario.TaskDelay:
-                    await Task.Delay(5000);
+                    await Task.Delay(100);
                     return "done";
                 case Scenario.TaskRun:
                     return await Task.Run(async () => "done");
@@ -239,6 +239,33 @@ public class WorkflowWorkerTests : WorkflowEnvironmentTestBase
                 case Scenario.WorkflowWhenAnyWithResultThreeParam:
                     return await await Workflow.WhenAnyAsync(
                         Task.FromResult("done"), Task.FromResult("done"), Task.FromResult("done"));
+                case Scenario.TaskRunWithTracingDisabled:
+                    Console.WriteLine("!!! AA1");
+                    Workflow.Unsafe.TracingEventsEnabled = false;
+                    // var workflowScheduler = TaskScheduler.Current;
+                    // Console.WriteLine("!!! AA2: {0}", workflowScheduler);
+                    // TaskCompletionSource readyForWorkflowCall = new();
+                    // TaskCompletionSource readyForWorkflowCall = new();
+                    // var result = Workflow.Unsafe.RunOnScheduler(async () =>
+                    // {
+                    //     Console.WriteLine("!!! AA2.1: {0}", Workflow.InWorkflow);
+                    //     readyForWorkflowCall.SetResult();
+
+                    //     return "done";
+                    // }, TaskScheduler.Default);
+
+                    var task = Task.Run(async () =>
+                    {
+                        Console.WriteLine("!!! AA2: {0}", Workflow.InWorkflow);
+                        return "done";
+                    });
+                    task.Wait();
+                    var result = task.Result;
+
+                    Console.WriteLine("!!! AA3");
+                    Workflow.Unsafe.TracingEventsEnabled = true;
+                    Console.WriteLine("!!! AA4");
+                    return result;
             }
             throw new InvalidOperationException("Unexpected completion");
         }
@@ -263,6 +290,7 @@ public class WorkflowWorkerTests : WorkflowEnvironmentTestBase
             // https://github.com/dotnet/runtime/issues/87481
             TaskWhenAnyWithResultTwoParam,
             WorkflowWhenAnyWithResultThreeParam,
+            TaskRunWithTracingDisabled,
         }
     }
 
@@ -322,6 +350,7 @@ public class WorkflowWorkerTests : WorkflowEnvironmentTestBase
         await AssertScenarioSucceeds(StandardLibraryCallsWorkflow.Scenario.TaskContinueWith);
         await AssertScenarioSucceeds(StandardLibraryCallsWorkflow.Scenario.TaskWhenAnyWithResultTwoParam);
         await AssertScenarioSucceeds(StandardLibraryCallsWorkflow.Scenario.WorkflowWhenAnyWithResultThreeParam);
+        await AssertScenarioSucceeds(StandardLibraryCallsWorkflow.Scenario.TaskRunWithTracingDisabled);
     }
 
     [Workflow]

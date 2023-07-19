@@ -74,6 +74,12 @@ namespace Temporalio.Workflows
         SearchAttributeCollection TypedSearchAttributes { get; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether
+        /// <see cref="Workflow.Unsafe.TracingEventsEnabled" /> is true.
+        /// </summary>
+        bool TracingEventsEnabled { get; set; }
+
+        /// <summary>
         /// Gets value for <see cref="Workflow.UtcNow" />.
         /// </summary>
         DateTime UtcNow { get; }
@@ -97,6 +103,8 @@ namespace Temporalio.Workflows
         /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>Task for completion.</returns>
         Task DelayAsync(TimeSpan delay, CancellationToken? cancellationToken);
+
+        // IDisposable EnableSystemScheduler();
 
         /// <summary>
         /// Backing call for
@@ -179,5 +187,7 @@ namespace Temporalio.Workflows
             Func<bool> conditionCheck,
             TimeSpan? timeout,
             CancellationToken? cancellationToken);
+
+        void ForceRunOnce();
     }
 }

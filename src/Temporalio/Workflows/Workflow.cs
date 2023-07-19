@@ -989,7 +989,8 @@ namespace Temporalio.Workflows
         }
 
         /// <summary>
-        /// Unsafe calls that can be made in a workflow.
+        /// Unsafe calls that can be made in a workflow. Users should avoid anything in this class
+        /// unless they are sure it is needed.
         /// </summary>
         public static class Unsafe
         {
@@ -1001,6 +1002,39 @@ namespace Temporalio.Workflows
             /// preventing a log or metric from being recorded on replay.
             /// </remarks>
             public static bool IsReplaying => Context.IsReplaying;
+
+            /// <summary>
+            /// Gets or sets a value indicating whether the task tracing is enabled. WARNING: This
+            /// is not stable API and may change in the future.
+            /// </summary>
+            /// <remarks>
+            /// Changing this property may not take effect if tracing events were disabled on the
+            /// worker options.
+            /// </remarks>
+            /// <remarks>
+            /// For most users this should never be changed. If for some advanced reason the
+            /// invalid-task/timer tracing utility needs to be disabled so an illegal call can be
+            /// made, this can be set to false. But then it should be set back to true immediately
+            /// thereafter.
+            /// </remarks>
+            public static bool TracingEventsEnabled
+            {
+                get => Context.TracingEventsEnabled;
+                set => Context.TracingEventsEnabled = value;
+            }
+
+            // public static IDisposable EnableSystemScheduler() => Context.EnableSystemScheduler();
+
+            public static T RunOnScheduler<T>(Func<Task<T>> func, TaskScheduler scheduler)
+            {
+                var task = Task.Factory.StartNew(func, default, default, scheduler).Unwrap();
+                if (scheduler is IWorkflowContext context)
+                {
+                    context.ForceRunOnce();
+                }
+                task.Wait();
+                return task.Result;
+            }
         }
     }
 }
