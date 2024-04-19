@@ -4310,6 +4310,64 @@ public class WorkflowWorkerTests : WorkflowEnvironmentTestBase
         });
     }
 
+    [Fact]
+    public async Task ExecuteWorkflowAsync_ReplaceClient_SwitchesServers()
+    {
+        // We are going to start two ephemeral servers, then we're going to start two workflows on
+        // them. Then we are going to start a worker w/ a client for the first one and make sure the
+        // workflow completes. Then we will replace the client with the other server's client and
+        // make sure that second workflow completes.
+        Temporalio.Testing.WorkflowEnvironment? env1 = await Temporalio.Testing.WorkflowEnvironment.StartLocalAsync();
+        try
+        {
+            await using var env2 = await Temporalio.Testing.WorkflowEnvironment.StartLocalAsync();
+
+            // Start a workflow on each server on the same task queue
+            var taskQueue = $"tq-{Guid.NewGuid()}";
+            var wf1 = await env1.Client.StartWorkflowAsync(
+                (SimpleWorkflow wf) => wf.RunAsync("server 1"),
+                new(id: $"wf-{Guid.NewGuid()}", taskQueue));
+            var wf2 = await env2.Client.StartWorkflowAsync(
+                (SimpleWorkflow wf) => wf.RunAsync("server 2"),
+                new(id: $"wf-{Guid.NewGuid()}", taskQueue));
+
+            // Start worker
+            using var worker = new TemporalWorker(
+                env1.Client,
+                new TemporalWorkerOptions(taskQueue).AddWorkflow<SimpleWorkflow>());
+            await worker.ExecuteAsync(async () =>
+            {
+                // Confirm that the first workflow succeeds but the second has never passed start
+                Console.WriteLine("!!! AA1");
+                await AssertMore.EqualEventuallyAsync(WorkflowExecutionStatus.Completed, async () =>
+                    (await wf1.DescribeAsync()).Status);
+                Console.WriteLine("!!! AA2");
+                Assert.Equal(WorkflowExecutionStatus.Running, (await wf2.DescribeAsync()).Status);
+
+                // Swap the client and kill the first server to force Core worker to do another poll
+                // call
+                worker.Client = env2.Client;
+                Console.WriteLine("!!! AA3");
+                await env1.ShutdownAsync();
+                Console.WriteLine("!!! AA4");
+                env1 = null;
+
+                // Confirm that the second workflow succeeds
+                Console.WriteLine("!!! AA5");
+                await AssertMore.EqualEventuallyAsync(WorkflowExecutionStatus.Completed, async () =>
+                    (await wf2.DescribeAsync()).Status);
+                Console.WriteLine("!!! AA6");
+            });
+        }
+        finally
+        {
+            if (env1 is { } env)
+            {
+                await env.ShutdownAsync();
+            }
+        }
+    }
+
     internal static Task AssertTaskFailureContainsEventuallyAsync(
         WorkflowHandle handle, string messageContains)
     {
