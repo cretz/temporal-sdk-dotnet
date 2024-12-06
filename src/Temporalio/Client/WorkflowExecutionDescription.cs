@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Temporalio.Api.WorkflowService.V1;
 using Temporalio.Converters;
 
@@ -8,18 +9,33 @@ namespace Temporalio.Client
     /// </summary>
     public class WorkflowExecutionDescription : WorkflowExecution
     {
-        /// <summary>
-        /// Initializes a new instance of the <see cref="WorkflowExecutionDescription"/> class.
-        /// </summary>
-        /// <param name="rawDescription">Raw description response.</param>
-        /// <param name="dataConverter">Data converter for memos.</param>
-        internal WorkflowExecutionDescription(
-            DescribeWorkflowExecutionResponse rawDescription, DataConverter dataConverter)
-            : base(rawDescription.WorkflowExecutionInfo, dataConverter) => RawDescription = rawDescription;
+        private WorkflowExecutionDescription(
+            DescribeWorkflowExecutionResponse rawDescription,
+            string? staticSummary,
+            string? staticDetails,
+            DataConverter dataConverter)
+            : base(rawDescription.WorkflowExecutionInfo, dataConverter)
+        {
+            RawDescription = rawDescription;
+            StaticSummary = staticSummary;
+            StaticDetails = staticDetails;
+        }
+
+        public string? StaticSummary { get; private init; }
+
+        public string? StaticDetails { get; private init; }
 
         /// <summary>
         /// Gets the raw proto info.
         /// </summary>
         internal DescribeWorkflowExecutionResponse RawDescription { get; private init; }
+
+        internal static async Task<WorkflowExecutionDescription> FromProtoAsync(
+            DescribeWorkflowExecutionResponse rawDescription, DataConverter dataConverter)
+        {
+            var (staticSummary, staticDetails) = await dataConverter.FromUserMetadataAsync(
+                rawDescription.ExecutionConfig?.UserMetadata).ConfigureAwait(false);
+            return new(rawDescription, staticSummary, staticDetails, dataConverter);
+        }
     }
 }

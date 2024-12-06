@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Temporalio.Api.Common.V1;
 using Temporalio.Api.Failure.V1;
+using Temporalio.Api.Sdk.V1;
 
 namespace Temporalio.Converters
 {
@@ -195,5 +196,31 @@ namespace Temporalio.Converters
         /// <returns>The converted value.</returns>
         public static RawValue ToRawValue(this IPayloadConverter converter, object? value) =>
             new(converter.ToPayload(value));
+
+        public static async Task<UserMetadata?> ToUserMetadataAsync(
+            this DataConverter converter, string? summary, string? details)
+        {
+            if (summary == null && details == null)
+            {
+                return null;
+            }
+            var metadata = new UserMetadata();
+            if (summary != null)
+            {
+                metadata.Summary = await converter.ToPayloadAsync(summary).ConfigureAwait(false);
+            }
+            if (details != null)
+            {
+                metadata.Details = await converter.ToPayloadAsync(details).ConfigureAwait(false);
+            }
+            return metadata;
+        }
+
+        public static async Task<(string? Summary, string? Details)> FromUserMetadataAsync(
+            this DataConverter converter, UserMetadata? metadata) => (
+            Summary: metadata?.Summary is { } s ?
+                await converter.ToValueAsync<string>(s).ConfigureAwait(false) : null,
+            Details: metadata?.Details is { } d ?
+                await converter.ToValueAsync<string>(d).ConfigureAwait(false) : null);
     }
 }

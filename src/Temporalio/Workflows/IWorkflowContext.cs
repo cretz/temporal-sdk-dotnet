@@ -33,6 +33,8 @@ namespace Temporalio.Workflows
         /// </summary>
         string CurrentBuildId { get; }
 
+        string CurrentDetails { get; set; }
+
         /// <summary>
         /// Gets value for <see cref="Workflow.CurrentHistoryLength" />.
         /// </summary>
@@ -141,7 +143,7 @@ namespace Temporalio.Workflows
         /// <param name="delay">Delay duration.</param>
         /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>Task for completion.</returns>
-        Task DelayAsync(TimeSpan delay, CancellationToken? cancellationToken);
+        Task DelayAsync(TimeSpan delay, DelayOptions options, CancellationToken? cancellationToken);
 
         /// <summary>
         /// Backing call for

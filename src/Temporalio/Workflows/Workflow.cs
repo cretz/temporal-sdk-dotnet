@@ -59,6 +59,12 @@ namespace Temporalio.Workflows
         /// </remarks>
         public static string CurrentBuildId => Context.CurrentBuildId;
 
+        public static string CurrentDetails
+        {
+            get => Context.CurrentDetails;
+            set => Context.CurrentDetails = value;
+        }
+
         /// <summary>
         /// Gets the current number of events in history.
         /// </summary>
@@ -295,7 +301,7 @@ namespace Temporalio.Workflows
         /// <see cref="DelayAsync(TimeSpan, CancellationToken?)" /> for details.</returns>
         /// <seealso cref="DelayAsync(TimeSpan, CancellationToken?)" />
         public static Task DelayAsync(int millisecondsDelay, CancellationToken? cancellationToken = null) =>
-            DelayAsync(TimeSpan.FromMilliseconds(millisecondsDelay), cancellationToken);
+            DelayAsync(TimeSpan.FromMilliseconds(millisecondsDelay), new(), cancellationToken);
 
         /// <summary>
         /// Sleep in a workflow for the given time.
@@ -318,7 +324,46 @@ namespace Temporalio.Workflows
         /// </para>
         /// </remarks>
         public static Task DelayAsync(TimeSpan delay, CancellationToken? cancellationToken = null) =>
-            Context.DelayAsync(delay, cancellationToken);
+            DelayAsync(delay, new(), cancellationToken);
+
+        /// <summary>
+        /// Sleep in a workflow for the given time. See documentation of
+        /// <see cref="DelayAsync(TimeSpan, CancellationToken?)" /> for details.
+        /// </summary>
+        /// <param name="millisecondsDelay">Delay amount. See documentation of
+        /// <see cref="DelayAsync(TimeSpan, CancellationToken?)" /> for details.</param>
+        /// <param name="cancellationToken">Cancellation token. See documentation of
+        /// <see cref="DelayAsync(TimeSpan, CancellationToken?)" /> for details.</param>
+        /// <returns>Task for completion. See documentation of
+        /// <see cref="DelayAsync(TimeSpan, CancellationToken?)" /> for details.</returns>
+        /// <seealso cref="DelayAsync(TimeSpan, CancellationToken?)" />
+        public static Task DelayAsync(
+            int millisecondsDelay, DelayOptions options, CancellationToken? cancellationToken = null) =>
+            DelayAsync(TimeSpan.FromMilliseconds(millisecondsDelay), options, cancellationToken);
+
+        /// <summary>
+        /// Sleep in a workflow for the given time.
+        /// </summary>
+        /// <param name="delay">Amount of time to sleep.</param>
+        /// <param name="cancellationToken">Cancellation token. If unset, this defaults to
+        /// <see cref="CancellationToken" />.</param>
+        /// <returns>Task that is complete when sleep completes.</returns>
+        /// <remarks>
+        /// <para>
+        /// The <c>delay</c> value can be <see cref="Timeout.Infinite" /> or
+        /// <see cref="Timeout.InfiniteTimeSpan" /> but otherwise cannot be negative. A server-side
+        /// timer is not created for infinite delays, so it is non-deterministic to change a timer
+        /// to/from infinite from/to an actual value.
+        /// </para>
+        /// <para>
+        /// If the <c>delay</c> is 0, it is assumed to be 1 millisecond and still results in a
+        /// server-side timer. Since Temporal timers are server-side, timer resolution may not end
+        /// up as precise as system timers.
+        /// </para>
+        /// </remarks>
+        public static Task DelayAsync(
+            TimeSpan delay, DelayOptions options, CancellationToken? cancellationToken = null) =>
+            Context.DelayAsync(delay, options, cancellationToken);
 
         /// <summary>
         /// Mark a patch as deprecated.

@@ -37,6 +37,8 @@ namespace Temporalio.Workflows
         /// </summary>
         public string? Name { get; }
 
+        public string? Description { get; }
+
         /// <summary>
         /// Gets or sets a value indicating whether the signal is dynamic. If a signal is dynamic,
         /// it cannot be given a name in this attribute and the method must accept a string name and

@@ -41,6 +41,10 @@ namespace Temporalio.Client
         /// </summary>
         public string? TaskQueue { get; set; }
 
+        public string? StaticSummary { get; set; }
+
+        public string? StaticDetails { get; set; }
+
         /// <summary>
         /// Gets or sets the total workflow execution timeout including retries and continue as new.
         /// </summary>

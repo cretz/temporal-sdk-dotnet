@@ -72,6 +72,8 @@ namespace Temporalio.Workflows
         /// </summary>
         public string? TaskQueue { get; set; }
 
+        public string? Summary { get; set; }
+
         /// <summary>
         /// Gets or sets the unique identifier for the activity. This should never be set unless
         /// users have a strong understanding of the system. Contact Temporal support to discuss the

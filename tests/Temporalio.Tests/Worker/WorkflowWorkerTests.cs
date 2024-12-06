@@ -20,6 +20,7 @@ using Temporalio.Exceptions;
 using Temporalio.Runtime;
 using Temporalio.Tests.Converters;
 using Temporalio.Worker;
+using Temporalio.Worker.Interceptors;
 using Temporalio.Workflows;
 using Xunit;
 using Xunit.Abstractions;
@@ -6009,6 +6010,135 @@ public class WorkflowWorkerTests : WorkflowEnvironmentTestBase
                 await replayer.ReplayWorkflowAsync(history);
             },
             new TemporalWorkerOptions().AddAllActivities(activities));
+    }
+
+    // Needed for next test
+    public class CaptureDelayInputInterceptor : IWorkerInterceptor
+    {
+        public ConcurrentQueue<DelayAsyncInput> Inputs { get; } = new();
+
+        public WorkflowInboundInterceptor InterceptWorkflow(
+            WorkflowInboundInterceptor nextInterceptor) =>
+            new WorkflowInbound(this, nextInterceptor);
+
+        private class WorkflowInbound : WorkflowInboundInterceptor
+        {
+            private readonly CaptureDelayInputInterceptor root;
+
+            internal WorkflowInbound(CaptureDelayInputInterceptor root, WorkflowInboundInterceptor next)
+                : base(next) => this.root = root;
+
+            public override void Init(WorkflowOutboundInterceptor outbound) =>
+                base.Init(new WorkflowOutbound(root, outbound));
+        }
+
+        private sealed class WorkflowOutbound : WorkflowOutboundInterceptor
+        {
+            private readonly CaptureDelayInputInterceptor root;
+
+            internal WorkflowOutbound(CaptureDelayInputInterceptor root, WorkflowOutboundInterceptor next)
+                : base(next) => this.root = root;
+
+            public override Task DelayAsync(DelayAsyncInput input)
+            {
+                root.Inputs.Enqueue(input);
+                return base.DelayAsync(input);
+            }
+        }
+    }
+
+    [Workflow]
+    public class MetadataWorkflow
+    {
+        [Activity]
+        public static string DoNothing() => "done";
+
+        [WorkflowRun]
+        public async Task RunAsync(bool returnImmediately)
+        {
+            if (returnImmediately)
+            {
+                return;
+            }
+
+            // Timer, activity, and child with metadata
+
+            // Timer, confirm the new overload does not affect old code
+            #pragma warning disable SA1129
+            await Workflow.DelayAsync(1, new());
+            #pragma warning restore SA1129
+            // Now just set normal timer
+            await Workflow.DelayAsync(1, new DelayOptions() { Summary = "my-timer" });
+
+            // Activity
+            await Workflow.ExecuteActivityAsync(() => DoNothing(), new()
+            {
+                StartToCloseTimeout = TimeSpan.FromSeconds(30),
+                Summary = "my-activity",
+            });
+
+            // Child
+            await Workflow.ExecuteChildWorkflowAsync(
+                (MetadataWorkflow wf) => wf.RunAsync(true),
+                new() { StaticSummary = "my-child", StaticDetails = "my-child-details" });
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteWorkflowAsync_UserMetadata_PropagatedProperly()
+    {
+        // Run workflow. We need to capture delay async inputs to confirm the
+        // first one has default cancellation token but second one doesn't
+        var interceptor = new CaptureDelayInputInterceptor();
+        await ExecuteWorkerAsync<MetadataWorkflow>(
+            async worker =>
+            {
+                var handle = await Client.StartWorkflowAsync(
+                    (MetadataWorkflow wf) => wf.RunAsync(false),
+                    new(id: $"workflow-{Guid.NewGuid()}", taskQueue: worker.Options.TaskQueue!)
+                    {
+                        StaticSummary = "my-workflow",
+                        StaticDetails = "my-workflow-details",
+                    });
+                await handle.GetResultAsync();
+
+                // Check description has summary/details
+                var desc = await handle.DescribeAsync();
+                Assert.Equal("my-workflow", desc.StaticSummary);
+                Assert.Equal("my-workflow-details", desc.StaticDetails);
+
+                // Check interceptor got two timers, first one got new() cancellation
+                // token and next one didn't. This will confirm we didn't harm any
+                // existing code by adding our overload.
+                var inputs = interceptor.Inputs.ToArray();
+                Assert.Equal(default(CancellationToken), inputs.First().CancellationToken);
+                Assert.NotEqual(default(CancellationToken), inputs.Last().CancellationToken);
+
+                // Check history for timer, activity, and child metadata
+                var history = await handle.FetchHistoryAsync();
+                Assert.Contains(history.Events, evt => evt.TimerStartedEventAttributes != null &&
+                    evt.UserMetadata?.Summary?.Data?.ToStringUtf8() == "\"my-timer\"");
+                Assert.Contains(history.Events, evt => evt.ActivityTaskScheduledEventAttributes != null &&
+                    evt.UserMetadata?.Summary?.Data?.ToStringUtf8() == "\"my-activity\"");
+                Assert.Contains(history.Events, evt => evt.StartChildWorkflowExecutionInitiatedEventAttributes != null &&
+                    evt.UserMetadata?.Summary?.Data?.ToStringUtf8() == "\"my-child\"" &&
+                    evt.UserMetadata?.Details?.Data?.ToStringUtf8() == "\"my-child-details\"");
+
+                // Go ahead and describe the child and confirm its metadata
+                var child = history.Events.Single(evt => evt.StartChildWorkflowExecutionInitiatedEventAttributes != null);
+                desc = await Client.GetWorkflowHandle(
+                    child.StartChildWorkflowExecutionInitiatedEventAttributes.WorkflowId).DescribeAsync();
+                Assert.Equal("my-child", desc.StaticSummary);
+                Assert.Equal("my-child-details", desc.StaticDetails);
+            },
+            new TemporalWorkerOptions() { Interceptors = new[] { interceptor } }.
+                AddAllActivities<MetadataWorkflow>(null));
+    }
+
+    [Fact]
+    public async Task ExecuteWorkflowAsync_WorkflowMetadata_Available()
+    {
+        // TODO
     }
 
     internal static Task AssertTaskFailureContainsEventuallyAsync(

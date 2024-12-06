@@ -219,6 +219,8 @@ namespace Temporalio.Worker
         /// <inheritdoc />
         public string CurrentBuildId { get; private set; }
 
+        public string CurrentDetails { get; set; } = string.Empty;
+
         /// <inheritdoc />
         public int CurrentHistoryLength { get; private set; }
 
@@ -343,8 +345,10 @@ namespace Temporalio.Worker
                 Headers: null));
 
         /// <inheritdoc/>
-        public Task DelayAsync(TimeSpan delay, CancellationToken? cancellationToken) =>
-            outbound.Value.DelayAsync(new(Delay: delay, CancellationToken: cancellationToken));
+        public Task DelayAsync(
+            TimeSpan delay, DelayOptions options, CancellationToken? cancellationToken) =>
+            outbound.Value.DelayAsync(
+                new(Delay: delay, CancellationToken: cancellationToken, Options: options));
 
         /// <inheritdoc/>
         public Task<TResult> ExecuteActivityAsync<TResult>(
@@ -485,7 +489,7 @@ namespace Temporalio.Worker
                         using (var delayCancelSource = new CancellationTokenSource())
                         {
                             var completedTask = await Task.WhenAny(source.Task, DelayAsync(
-                                timeout.GetValueOrDefault(), delayCancelSource.Token)).ConfigureAwait(true);
+                                timeout.GetValueOrDefault(), new(), delayCancelSource.Token)).ConfigureAwait(true);
                             // Do not timeout
                             if (completedTask == source.Task)
                             {
@@ -1141,6 +1145,12 @@ namespace Temporalio.Worker
                         queryDefn = WorkflowQueryDefinition.CreateWithoutAttribute(
                             "__stack_trace", getter);
                     }
+                    else if (query.QueryType == "__temporal_workflow_metadata")
+                    {
+                        Func<Api.Sdk.V1.WorkflowMetadata> getter = GetWorkflowMetadata;
+                        queryDefn = WorkflowQueryDefinition.CreateWithoutAttribute(
+                            "__temporal_workflow_metadata", getter);
+                    }
                     else
                     {
                         // Find definition or fail
@@ -1453,6 +1463,30 @@ namespace Temporalio.Worker
             }).Where(s => !string.IsNullOrEmpty(s)).Select(s => $"Task waiting at:\n{s}"));
         }
 
+        private Api.Sdk.V1.WorkflowMetadata GetWorkflowMetadata()
+        {
+            var defn = new Api.Sdk.V1.WorkflowDefinition() { Type = Info.WorkflowType };
+            defn.QueryDefinitions.AddRange(Queries.Values.Select(query =>
+                new Api.Sdk.V1.WorkflowInteractionDefinition()
+                {
+                    Name = query.Name ?? string.Empty,
+                    Description = query.Description ?? string.Empty,
+                }).OrderBy(q => q.Name));
+            defn.SignalDefinitions.AddRange(Signals.Values.Select(query =>
+                new Api.Sdk.V1.WorkflowInteractionDefinition()
+                {
+                    Name = query.Name ?? string.Empty,
+                    Description = query.Description ?? string.Empty,
+                }).OrderBy(q => q.Name));
+            defn.UpdateDefinitions.AddRange(Updates.Values.Select(query =>
+                new Api.Sdk.V1.WorkflowInteractionDefinition()
+                {
+                    Name = query.Name ?? string.Empty,
+                    Description = query.Description ?? string.Empty,
+                }).OrderBy(q => q.Name));
+            return new() { Definition = defn, CurrentDetails = CurrentDetails };
+        }
+
         private void ApplyLegacyCompletionCommandReordering(
             WorkflowActivation act,
             WorkflowActivationCompletion completion,
@@ -1732,6 +1766,8 @@ namespace Temporalio.Worker
                         {
                             Seq = seq,
                             StartToFireTimeout = Google.Protobuf.WellKnownTypes.Duration.FromTimeSpan(delay),
+                            Summary = input.Options.Summary == null ?
+                                null : instance.PayloadConverter.ToPayload(input.Options.Summary),
                         },
                     });
                 }
@@ -1800,6 +1836,10 @@ namespace Temporalio.Worker
                         if (input.Options.VersioningIntent is { } vi)
                         {
                             cmd.VersioningIntent = (Bridge.Api.Common.VersioningIntent)(int)vi;
+                        }
+                        if (input.Options.Summary is { } summary)
+                        {
+                            cmd.Summary = instance.PayloadConverter.ToPayload(summary);
                         }
                         instance.AddCommand(new() { ScheduleActivity = cmd });
                         return seq;
@@ -1932,6 +1972,10 @@ namespace Temporalio.Worker
                     RetryPolicy = input.Options.RetryPolicy?.ToProto(),
                     CronSchedule = input.Options.CronSchedule ?? string.Empty,
                     CancellationType = (Bridge.Api.ChildWorkflow.ChildWorkflowCancellationType)input.Options.CancellationType,
+                    StaticSummary = input.Options.StaticSummary is { } summ ?
+                        instance.PayloadConverter.ToPayload(summ) : null,
+                    StaticDetails = input.Options.StaticDetails is { } det ?
+                        instance.PayloadConverter.ToPayload(det) : null,
                 };
                 if (input.Options.ExecutionTimeout is TimeSpan execTimeout)
                 {
@@ -2173,6 +2217,7 @@ namespace Temporalio.Worker
                                 // like any other timer.
                                 await instance.DelayAsync(
                                     res.Backoff.BackoffDuration.ToTimeSpan(),
+                                    new(),
                                     cancellationToken).ConfigureAwait(true);
                                 // Re-schedule with backoff info
                                 seq = applyScheduleCommand(res.Backoff);

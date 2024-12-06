@@ -15,6 +15,7 @@ namespace Temporalio.Workflows
 
         private WorkflowUpdateDefinition(
             string? name,
+            string? description,
             MethodInfo? method,
             MethodInfo? validatorMethod,
             Delegate? del,
@@ -22,6 +23,7 @@ namespace Temporalio.Workflows
             HandlerUnfinishedPolicy unfinishedPolicy)
         {
             Name = name;
+            Description = description;
             Method = method;
             ValidatorMethod = validatorMethod;
             Delegate = del;
@@ -33,6 +35,8 @@ namespace Temporalio.Workflows
         /// Gets the update name. This is null if the update is dynamic.
         /// </summary>
         public string? Name { get; private init; }
+
+        public string? Description { get; private init; }
 
         /// <summary>
         /// Gets a value indicating whether the update is dynamic.
@@ -106,10 +110,11 @@ namespace Temporalio.Workflows
             string? name,
             Delegate del,
             Delegate? validatorDel = null,
-            HandlerUnfinishedPolicy unfinishedPolicy = HandlerUnfinishedPolicy.WarnAndAbandon)
+            HandlerUnfinishedPolicy unfinishedPolicy = HandlerUnfinishedPolicy.WarnAndAbandon,
+            string? description = null)
         {
             AssertValid(del.Method, dynamic: name == null, validatorDel?.Method);
-            return new(name, null, null, del, validatorDel, unfinishedPolicy);
+            return new(name, description, null, null, del, validatorDel, unfinishedPolicy);
         }
 
         /// <summary>
@@ -145,7 +150,7 @@ namespace Temporalio.Workflows
                     name = name.Substring(0, name.Length - 5);
                 }
             }
-            return new(name, method, validatorMethod, null, null, attr.UnfinishedPolicy);
+            return new(name, attr.Description, method, validatorMethod, null, null, attr.UnfinishedPolicy);
         }
 
         private static void AssertValid(
