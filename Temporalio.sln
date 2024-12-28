@@ -17,6 +17,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Temporalio.Extensions.Hosti
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Temporalio.Extensions.DiagnosticSource", "src\Temporalio.Extensions.DiagnosticSource\Temporalio.Extensions.DiagnosticSource.csproj", "{CC7EA7CD-BBE7-448C-8A4B-F8B2D1E55990}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Temporalio.AnalyzerTests", "tests\Temporalio.AnalyzerTests\Temporalio.AnalyzerTests.csproj", "{8BA781E3-B0A2-4589-AA6E-2AEA57F3DB2B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Temporalio.Analyzers", "src\Temporalio.Analyzers\Temporalio.Analyzers.csproj", "{96902EEF-8F15-4225-8B41-87D70F54193D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Temporalio.AnalyzerTests.SeparateProject", "tests\Temporalio.AnalyzerTests.SeparateProject\Temporalio.AnalyzerTests.SeparateProject.csproj", "{C022F2CD-5689-472D-8228-7F0B14D62322}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -46,6 +52,18 @@ Global
 		{CC7EA7CD-BBE7-448C-8A4B-F8B2D1E55990}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CC7EA7CD-BBE7-448C-8A4B-F8B2D1E55990}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CC7EA7CD-BBE7-448C-8A4B-F8B2D1E55990}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8BA781E3-B0A2-4589-AA6E-2AEA57F3DB2B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8BA781E3-B0A2-4589-AA6E-2AEA57F3DB2B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8BA781E3-B0A2-4589-AA6E-2AEA57F3DB2B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8BA781E3-B0A2-4589-AA6E-2AEA57F3DB2B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{96902EEF-8F15-4225-8B41-87D70F54193D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{96902EEF-8F15-4225-8B41-87D70F54193D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{96902EEF-8F15-4225-8B41-87D70F54193D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{96902EEF-8F15-4225-8B41-87D70F54193D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C022F2CD-5689-472D-8228-7F0B14D62322}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C022F2CD-5689-472D-8228-7F0B14D62322}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C022F2CD-5689-472D-8228-7F0B14D62322}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C022F2CD-5689-472D-8228-7F0B14D62322}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{7AE1422A-0937-40D7-9A62-431DD0E2F6D5} = {758B61E2-9AB6-46BF-B53C-16BD140BF56B}
@@ -53,5 +71,8 @@ Global
 		{D4AC2E2B-1C24-491D-9175-874D448D30FE} = {758B61E2-9AB6-46BF-B53C-16BD140BF56B}
 		{E8D1975A-5AF7-4375-BAD0-3C256DCB7F87} = {758B61E2-9AB6-46BF-B53C-16BD140BF56B}
 		{CC7EA7CD-BBE7-448C-8A4B-F8B2D1E55990} = {758B61E2-9AB6-46BF-B53C-16BD140BF56B}
+		{8BA781E3-B0A2-4589-AA6E-2AEA57F3DB2B} = {F2683DAA-F157-448E-96C8-DF7BB019886D}
+		{96902EEF-8F15-4225-8B41-87D70F54193D} = {758B61E2-9AB6-46BF-B53C-16BD140BF56B}
+		{C022F2CD-5689-472D-8228-7F0B14D62322} = {F2683DAA-F157-448E-96C8-DF7BB019886D}
 	EndGlobalSection
 EndGlobal
