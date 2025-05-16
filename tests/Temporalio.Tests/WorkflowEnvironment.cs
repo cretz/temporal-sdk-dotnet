@@ -78,8 +78,6 @@ public class WorkflowEnvironment : IAsyncLifetime
                         "--dynamic-config-value",
                         "system.enableDeploymentVersions=true",
                     },
-                    // TODO: Remove after next CLI release
-                    DownloadVersion = "v1.3.1-persistence-fix.0",
                 },
             });
         }
