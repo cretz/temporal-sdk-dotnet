@@ -11,9 +11,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf.Collections;
 using Microsoft.Extensions.Logging;
+using NexusRpc;
 using Temporalio.Api.Common.V1;
 using Temporalio.Bridge.Api.ActivityResult;
 using Temporalio.Bridge.Api.ChildWorkflow;
+using Temporalio.Bridge.Api.Nexus;
 using Temporalio.Bridge.Api.WorkflowActivation;
 using Temporalio.Bridge.Api.WorkflowCommands;
 using Temporalio.Bridge.Api.WorkflowCompletion;
@@ -55,6 +57,8 @@ namespace Temporalio.Worker
         private readonly Dictionary<uint, PendingChildInfo> childWorkflowsPendingCompletion = new();
         private readonly Dictionary<uint, PendingExternalSignal> externalSignalsPending = new();
         private readonly Dictionary<uint, PendingExternalCancel> externalCancelsPending = new();
+        private readonly Dictionary<uint, PendingNexusOperationInfo> nexusOperationsPendingStart = new();
+        private readonly Dictionary<uint, PendingNexusOperationInfo> nexusOperationsPendingCompletion = new();
         // Buffered signals have to be a list instead of a dictionary because when a dynamic signal
         // handler is added, we need to traverse in insertion order
         private readonly List<SignalWorkflow> bufferedSignals = new();
@@ -81,6 +85,7 @@ namespace Temporalio.Worker
         private uint timerCounter;
         private uint activityCounter;
         private uint childWorkflowCounter;
+        private uint nexusOperationCounter;
         private uint externalSignalsCounter;
         private uint externalCancelsCounter;
         private WorkflowQueryDefinition? dynamicQuery;
@@ -389,6 +394,12 @@ namespace Temporalio.Worker
                 Args: args,
                 Options: options,
                 Headers: null));
+
+        public NexusClient CreateNexusClient(string service, NexusClientOptions options) =>
+            new NexusClientImpl(this, service, options);
+
+        public NexusClient<TService> CreateNexusClient<TService>(NexusClientOptions options) =>
+            new NexusClientImpl<TService>(this, options);
 
         /// <inheritdoc/>
         public Task DelayWithOptionsAsync(DelayOptions options) =>
@@ -1059,6 +1070,12 @@ namespace Temporalio.Worker
                 case WorkflowActivationJob.VariantOneofCase.ResolveChildWorkflowExecutionStart:
                     ApplyResolveChildWorkflowExecutionStart(job.ResolveChildWorkflowExecutionStart);
                     break;
+                case WorkflowActivationJob.VariantOneofCase.ResolveNexusOperation:
+                    ApplyResolveNexusOperation(job.ResolveNexusOperation);
+                    break;
+                case WorkflowActivationJob.VariantOneofCase.ResolveNexusOperationStart:
+                    ApplyResolveNexusOperationStart(job.ResolveNexusOperationStart);
+                    break;
                 case WorkflowActivationJob.VariantOneofCase.ResolveRequestCancelExternalWorkflow:
                     ApplyResolveRequestCancelExternalWorkflow(job.ResolveRequestCancelExternalWorkflow);
                     break;
@@ -1444,6 +1461,26 @@ namespace Temporalio.Worker
             {
                 throw new InvalidOperationException(
                     $"Failed finding child for sequence {resolve.Seq}");
+            }
+            pending.StartCompletionSource.TrySetResult(resolve);
+        }
+
+        private void ApplyResolveNexusOperation(ResolveNexusOperation resolve)
+        {
+            if (!nexusOperationsPendingCompletion.TryGetValue(resolve.Seq, out var pending))
+            {
+                throw new InvalidOperationException(
+                    $"Failed finding Nexus operation for sequence {resolve.Seq}");
+            }
+            pending.ResultCompletionSource.TrySetResult(resolve.Result);
+        }
+
+        private void ApplyResolveNexusOperationStart(ResolveNexusOperationStart resolve)
+        {
+            if (!nexusOperationsPendingStart.TryGetValue(resolve.Seq, out var pending))
+            {
+                throw new InvalidOperationException(
+                    $"Failed finding Nexus operation for sequence {resolve.Seq}");
             }
             pending.StartCompletionSource.TrySetResult(resolve);
         }
@@ -2448,6 +2485,88 @@ namespace Temporalio.Worker
                 return handleSource.Task;
             }
 
+            public override Task<NexusOperationHandle<TResult>> StartNexusOperationAsync<TResult>(
+                StartNexusOperationInput input)
+            {
+                var token = input.Options.CancellationToken ?? instance.CancellationToken;
+                // We do not even want to schedule if the cancellation token is already cancelled.
+                // We choose to use cancelled failure instead of wrapping in child failure which is
+                // similar to what Java and TypeScript do, with the accepted tradeoff that it makes
+                // catch clauses more difficult (hence the presence of
+                // TemporalException.IsCanceledException helper).
+                if (token.IsCancellationRequested)
+                {
+                    return Task.FromException<NexusOperationHandle<TResult>>(
+                        new CanceledFailureException("Nexus operation cancelled before scheduled"));
+                }
+
+                var seq = ++instance.nexusOperationCounter;
+                var cmd = new ScheduleNexusOperation()
+                {
+                    Seq = seq,
+                    Endpoint = input.ClientOptions.Endpoint,
+                    Service = input.Service,
+                    Operation = input.OperationName,
+                    Input = input.Arg == null ? null : instance.PayloadConverter.ToPayload(input.Arg),
+                };
+                if (input.Options.ScheduleToCloseTimeout is TimeSpan schedToCloseTimeout)
+                {
+                    cmd.ScheduleToCloseTimeout = Google.Protobuf.WellKnownTypes.Duration.FromTimeSpan(schedToCloseTimeout);
+                }
+                if (input.Headers is IDictionary<string, string> headers)
+                {
+                    cmd.NexusHeader.Add(headers);
+                }
+                var workflowCommand = new WorkflowCommand() { ScheduleNexusOperation = cmd };
+                if (input.Options.Summary is { } summary)
+                {
+                    workflowCommand.UserMetadata = new() { Summary = instance.PayloadConverter.ToPayload(summary) };
+                }
+                instance.AddCommand(workflowCommand);
+
+                var handleSource = new TaskCompletionSource<NexusOperationHandle<TResult>>();
+                var pending = new PendingNexusOperationInfo(
+                    StartCompletionSource: new(),
+                    ResultCompletionSource: new());
+                instance.nexusOperationsPendingStart[seq] = pending;
+
+                // Wait for start and result inside of task
+                _ = instance.QueueNewTaskAsync(async () =>
+                {
+                    using (token.Register(() =>
+                    {
+                        // Send cancel if in either pending dict
+                        if (instance.nexusOperationsPendingStart.ContainsKey(seq) ||
+                            instance.nexusOperationsPendingCompletion.ContainsKey(seq))
+                        {
+                            instance.AddCommand(new()
+                            {
+                                RequestCancelNexusOperation = new() { Seq = seq },
+                            });
+                        }
+                    }))
+                    {
+                        // Wait for start
+                        var startRes = await pending.StartCompletionSource.Task.ConfigureAwait(true);
+                        // Remove pending start and set as pending completion
+                        instance.nexusOperationsPendingStart.Remove(seq);
+                        instance.nexusOperationsPendingCompletion[seq] = pending;
+                        // Resolve the handle task for the user
+                        var handle = new NexusOperationHandleImpl<TResult>(
+                            instance.PayloadConverter,
+                            instance.failureConverter,
+                            startRes.HasOperationId ? startRes.OperationId : null);
+                        handleSource.SetResult(handle);
+
+                        // Wait for completion and set on handle
+                        var completeRes = await pending.ResultCompletionSource.Task.ConfigureAwait(true);
+                        instance.nexusOperationsPendingCompletion.Remove(seq);
+                        handle.CompletionSource.SetResult(completeRes);
+                    }
+                });
+                return handleSource.Task;
+            }
+
             private Task SignalExternalWorkflowInternalAsync(
                 ISerializationContext.Workflow serializationContext,
                 IPayloadConverter payloadConverter,
@@ -2718,6 +2837,109 @@ namespace Temporalio.Worker
                 instance.outbound.Value.CancelExternalWorkflowAsync(new(Id: Id, RunId: RunId));
         }
 
+        private class NexusClientImpl : NexusClient
+        {
+            private readonly WorkflowInstance instance;
+
+            public NexusClientImpl(WorkflowInstance instance, string service, NexusClientOptions options)
+            {
+                this.instance = instance;
+                Service = service;
+                Options = options;
+            }
+
+            public override string Service { get; }
+
+            public override NexusClientOptions Options { get; }
+
+            public override Task<NexusOperationHandle<TResult>> StartNexusOperationAsync<TResult>(
+                string operationName, object? arg, NexusOperationOptions? options = null) =>
+                instance.outbound.Value.StartNexusOperationAsync<TResult>(new(
+                    Service: Service,
+                    ClientOptions: Options,
+                    OperationName: operationName,
+                    Arg: arg,
+                    Options: options ?? new(),
+                    Headers: null));
+        }
+
+        private class NexusClientImpl<TService> : NexusClient<TService>
+        {
+            private readonly WorkflowInstance instance;
+
+            public NexusClientImpl(WorkflowInstance instance, NexusClientOptions options)
+            {
+                this.instance = instance;
+                ServiceDefinition = ServiceDefinition.FromType<TService>();
+                Options = options;
+            }
+
+            public override ServiceDefinition ServiceDefinition { get; }
+
+            public override NexusClientOptions Options { get; }
+
+            public override Task<NexusOperationHandle<TResult>> StartNexusOperationAsync<TResult>(
+                string operationName, object? arg, NexusOperationOptions? options = null) =>
+                instance.outbound.Value.StartNexusOperationAsync<TResult>(new(
+                    Service: Service,
+                    ClientOptions: Options,
+                    OperationName: operationName,
+                    Arg: arg,
+                    Options: options ?? new(),
+                    Headers: null));
+        }
+
+        private class NexusOperationHandleImpl<TResult> : NexusOperationHandle<TResult>
+        {
+            private readonly IPayloadConverter payloadConverter;
+            private readonly IFailureConverter failureConverter;
+
+            public NexusOperationHandleImpl(
+                IPayloadConverter payloadConverter,
+                IFailureConverter failureConverter,
+                string? operationToken)
+            {
+                this.payloadConverter = payloadConverter;
+                this.failureConverter = failureConverter;
+                OperationToken = operationToken;
+            }
+
+            public override string? OperationToken { get; }
+
+            internal TaskCompletionSource<NexusOperationResult> CompletionSource { get; } = new();
+
+            public override async Task<TLocalResult> GetResultAsync<TLocalResult>()
+            {
+                var res = await CompletionSource.Task.ConfigureAwait(true);
+                // Return if completed or extract failure if failed
+                Api.Failure.V1.Failure failure;
+                switch (res.StatusCase)
+                {
+                    case NexusOperationResult.StatusOneofCase.Completed:
+                        // Use default if they are ignoring result or payload not present
+                        if (typeof(TLocalResult) == typeof(ValueTuple) || res.Completed == null)
+                        {
+                            return default!;
+                        }
+                        return payloadConverter.ToValue<TLocalResult>(res.Completed);
+                    case NexusOperationResult.StatusOneofCase.Failed:
+                        failure = res.Failed;
+                        break;
+                    case NexusOperationResult.StatusOneofCase.Cancelled:
+                        failure = res.Cancelled;
+                        break;
+                    case NexusOperationResult.StatusOneofCase.TimedOut:
+                        failure = res.TimedOut;
+                        break;
+                    default:
+                        throw new InvalidOperationException(
+                            $"Unrecognized operation result status {res.StatusCase}");
+                }
+                // Convert failure and throw
+                throw failureConverter.ToException(failure, payloadConverter);
+            }
+        }
+
         private record PendingActivityInfo(
             ISerializationContext.Activity SerializationContext,
             TaskCompletionSource<ActivityResolution> CompletionSource);
@@ -2734,6 +2956,10 @@ namespace Temporalio.Worker
         private record PendingExternalCancel(
             ISerializationContext.Workflow SerializationContext,
             TaskCompletionSource<ResolveRequestCancelExternalWorkflow> CompletionSource);
+
+        private record PendingNexusOperationInfo(
+            TaskCompletionSource<ResolveNexusOperationStart> StartCompletionSource,
+            TaskCompletionSource<NexusOperationResult> ResultCompletionSource);
 
         private class Handlers : LinkedList<Handlers.Handler>
         {
