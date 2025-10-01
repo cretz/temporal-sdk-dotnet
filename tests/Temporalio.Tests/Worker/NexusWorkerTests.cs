@@ -1,5 +1,6 @@
 namespace Temporalio.Tests.Worker;
 
+using System.Collections.Concurrent;
 using NexusRpc;
 using NexusRpc.Handlers;
 using Temporalio.Api.Enums.V1;
@@ -264,11 +265,13 @@ public class NexusWorkerTests : WorkflowEnvironmentTestBase
     public async Task ExecuteNexusOperationAsync_SyncTimeout_FailsAsExpected()
     {
         var contextSource = new TaskCompletionSource<OperationStartContext>();
+        var cancelReasonSource = new TaskCompletionSource<string>();
         var workerOptions = new TemporalWorkerOptions($"tq-{Guid.NewGuid()}").
             AddNexusService(new HandlerFactoryStringService(() =>
                 OperationHandler.Sync<string, string>(async (ctx, name) =>
                 {
-                    contextSource.SetResult(ctx);
+                    ctx.CancellationToken.Register(
+                        () => cancelReasonSource.SetResult(ctx.CancellationReason!));
                     try
                     {
                         await Task.Delay(40000, ctx.CancellationToken);
@@ -292,9 +295,9 @@ public class NexusWorkerTests : WorkflowEnvironmentTestBase
         Assert.IsType<TimeoutFailureException>(
             Assert.IsType<NexusOperationFailureException>(exc.InnerException).InnerException);
         // Also check that our cancel token is canceled for the proper reason
-        var ctx = await contextSource.Task;
-        Assert.True(await Task.Run(() => ctx.CancellationToken.WaitHandle.WaitOne(2000)));
-        Assert.Equal("timed out", ctx.CancellationReason);
+        var reasonTask = await Task.WhenAny(cancelReasonSource.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        Assert.Equal(cancelReasonSource.Task, reasonTask);
+        Assert.Equal("timed out", await cancelReasonSource.Task);
     }
 
     [Workflow]
@@ -753,6 +756,91 @@ public class NexusWorkerTests : WorkflowEnvironmentTestBase
         Assert.Equal(
             "NoReturnOrParamWorkflow",
             (await Client.GetWorkflowHandle(workflowIds[2]).DescribeAsync()).WorkflowType);
+    }
+
+    [NexusService]
+    public interface ICancelTypeService
+    {
+        [NexusOperation]
+        void WaitOnCancellation();
+    }
+
+    [NexusServiceHandler(typeof(ICancelTypeService))]
+    public class CancelTypeService
+    {
+        [NexusOperationHandler]
+        public IOperationHandler<NoValue, NoValue> WaitOnCancellation() =>
+            WorkflowRunOperationHandler.FromHandleFactory(context =>
+                context.StartWorkflowAsync(
+                    (CancelTypeWorkflow wf) => wf.RunAsync(),
+                    new() { Id = $"wf-{Guid.NewGuid()}" }));
+    }
+
+    [Workflow]
+    public class CancelTypeWorkflow
+    {
+        [WorkflowRun]
+        public async Task RunAsync()
+        {
+            // Wait on cancellation then return success
+            try
+            {
+                await Workflow.WaitConditionAsync(() => false);
+                throw new InvalidOperationException("Unexpected success");
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("!!! GOT CANCEL BEGIN!");
+                // Do nothing
+                await Workflow.DelayAsync(5000, cancellationToken: CancellationToken.None);
+                // await Workflow.WaitConditionAsync(() => false, cancellationToken: CancellationToken.None);
+                Console.WriteLine("!!! GOT CANCEL END!");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteNexusOperationAsync_CancelWaitRequested_ProperlyCancels()
+    {
+        var workerOptions = new TemporalWorkerOptions($"tq-{Guid.NewGuid()}").
+            AddNexusService(new CancelTypeService()).
+            AddWorkflow<CancelTypeWorkflow>();
+        var endpoint = await CreateNexusEndpointAsync(workerOptions.TaskQueue!);
+
+        var handle = await RunInWorkflowAsync(
+            workerOptions,
+            inWorkflowFunc: async () =>
+            {
+                var client = Workflow.CreateNexusClient<ICancelTypeService>(endpoint);
+                try
+                {
+                    await client.ExecuteNexusOperationAsync(
+                        svc => svc.WaitOnCancellation(),
+                        new() { CancellationType = NexusOperationCancellationType.WaitCancellationRequested });
+                    throw new InvalidOperationException("Unexpected success");
+                }
+                catch (NexusOperationFailureException e) when (TemporalException.IsCanceledException(e))
+                {
+                    // Do nothing
+                }
+                // TODO(cretz): Remove this
+                Console.WriteLine("!!! WAIT BEGIN");
+                await Workflow.DelayAsync(10000, cancellationToken: CancellationToken.None);
+                // await Workflow.WaitConditionAsync(() => false, cancellationToken: CancellationToken.None);
+                Console.WriteLine("!!! WAIT END");
+            },
+            beforeGetResultFunc: async handle =>
+            {
+                // Wait for the Nexus operation to show as started
+                await AssertMore.HasEventEventuallyAsync(
+                    handle, evt => evt.NexusOperationStartedEventAttributes != null);
+                // Now cancel the workflow
+                await handle.CancelAsync();
+            });
+        foreach (var evt in (await handle.FetchHistoryAsync()).Events)
+        {
+            Console.WriteLine("!!! EVENT: {0}", evt);
+        }
     }
 
     private async Task<string> CreateNexusEndpointAsync(string taskQueue)
